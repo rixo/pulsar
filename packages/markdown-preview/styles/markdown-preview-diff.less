@@ -1,0 +1,47 @@
+// Styles for `markdown-preview` diff mode (`markdown-preview:toggle-diff`).
+// Word-level changes come from `node-htmldiff` as <ins>/<del>; block gutters
+// are added by `diff-renderer.js`.
+
+@diff-added: #2ea043; // new / added — blue-green
+@diff-removed: #f85149; // old / removed — red
+@diff-added-bg: fade(@diff-added, 22%);
+@diff-removed-bg: fade(@diff-removed, 22%);
+
+.markdown-preview.markdown-preview-diff {
+  ins {
+    text-decoration: none;
+    background-color: @diff-added-bg;
+    border-radius: 2px;
+  }
+
+  del {
+    text-decoration: line-through;
+    background-color: @diff-removed-bg;
+    border-radius: 2px;
+  }
+
+  // Block gutters: colored left border marking where the change lives.
+  .diff-block-added {
+    border-left: 3px solid @diff-added;
+    padding-left: 0.6em;
+  }
+
+  .diff-block-removed {
+    border-left: 3px solid @diff-removed;
+    padding-left: 0.6em;
+  }
+
+  .diff-block-changed {
+    border-left: 3px solid mix(@diff-added, @diff-removed, 50%);
+    padding-left: 0.6em;
+  }
+
+  .diff-source-only-banner {
+    margin: 0 0 1em;
+    padding: 0.5em 0.8em;
+    border-left: 3px solid #d29922; // amber — source-only
+    background-color: fade(#d29922, 15%);
+    font-style: italic;
+    opacity: 0.85;
+  }
+}

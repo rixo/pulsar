@@ -15,12 +15,14 @@
   "dependencies": {
     "cheerio": "^1.0.0-rc.3",
     "dedent": "^1.5.3",
+    "diff": "^9.0.0",
     "dompurify": "^3.2.6",
     "emoji-images": "^0.1.1",
     "fs-plus": "^3.0.0",
     "github-markdown-css": "^5.5.1",
     "marked": "5.0.3",
     "morphdom": "^2.7.2",
+    "node-htmldiff": "^0.9.4",
     "underscore-plus": "^1.0.0",
     "yaml-front-matter": "^4.1.1"
   },
@@ -54,6 +56,19 @@
       "type": "boolean",
       "default": true,
       "description": "Open Markdown files as a rendered preview instead of the editor. Use `markdown-preview:toggle` (`ctrl-shift-m`) to switch between the preview and the editable source."
+    },
+    "showDiff": {
+      "order": 9,
+      "type": "boolean",
+      "default": false,
+      "description": "Render a diff against the git `HEAD` version (added/removed shown inline). Toggle with `markdown-preview:toggle-diff` (`ctrl-shift-d`). This setting is global and persists across reloads."
+    },
+    "diffMergeMaxWords": {
+      "order": 10,
+      "type": "integer",
+      "default": 5,
+      "minimum": 0,
+      "description": "In diff mode, merge word-level changes separated by fewer than this many unchanged words into a single removed/added chunk (a coarser, line-like diff). Set to 0 to keep the raw word-level diff."
     },
     "allowUnsafeProtocols": {
       "order": 4,

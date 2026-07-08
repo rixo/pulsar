@@ -167,8 +167,9 @@ exports.toHTML = async function (text, filePath, grammar) {
   return result;
 }
 
-// Render with the package's own `marked` library.
-function render(text, filePath) {
+// Render Markdown to a sanitized HTML string with the package's own `marked`
+// library. Shared by the fragment renderer and the diff renderer.
+function renderHTMLString(text) {
   if (marked == null || yamlFrontMatter == null || cheerio == null) {
     marked = require('marked')
     yamlFrontMatter = require('yaml-front-matter')
@@ -203,11 +204,19 @@ function render(text, filePath) {
 
   html = $.html()
 
-  html = createDOMPurify().sanitize(html, {
+  return createDOMPurify().sanitize(html, {
     ALLOW_UNKNOWN_PROTOCOLS: atom.config.get(
       'markdown-preview.allowUnsafeProtocols'
     )
   })
+}
+
+exports.renderHTMLString = renderHTMLString
+exports.resolveImagePaths = resolveImagePaths
+
+// Render with the package's own `marked` library.
+function render(text, filePath) {
+  const html = renderHTMLString(text)
 
   const template = document.createElement('template')
   template.innerHTML = html.trim()

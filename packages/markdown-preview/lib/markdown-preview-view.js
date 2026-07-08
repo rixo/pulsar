@@ -21,6 +21,9 @@ module.exports = class MarkdownPreviewView {
 
     this.emitter = new Emitter()
     this.loaded = false
+    // Diff mode is a global toggle persisted in config, so all previews share
+    // it and it survives a reload.
+    this.diffMode = atom.config.get('markdown-preview.showDiff')
     this.disposables = new CompositeDisposable()
     this.registerScrollCommands()
     if (this.editorId != null) {
@@ -164,6 +167,10 @@ module.exports = class MarkdownPreviewView {
       'markdown-preview:select-all': () => {
         this.selectAll()
       },
+      'markdown-preview:toggle-diff': () => {
+        const keyPath = 'markdown-preview.showDiff'
+        atom.config.set(keyPath, !atom.config.get(keyPath))
+      },
       'markdown-preview:zoom-in': () => {
         const zoomLevel = parseFloat(getComputedStyle(this.element).zoom)
         this.element.style.zoom = zoomLevel + 0.1
@@ -228,6 +235,13 @@ module.exports = class MarkdownPreviewView {
         'markdown-preview.breakOnSingleNewline',
         changeHandler
       )
+    )
+
+    this.disposables.add(
+      atom.config.onDidChange('markdown-preview.showDiff', ({ newValue }) => {
+        this.diffMode = newValue
+        this.renderMarkdown()
+      })
     )
 
     this.disposables.add(
@@ -372,8 +386,20 @@ module.exports = class MarkdownPreviewView {
   }
 
   async renderMarkdownText(text) {
+    if (this.diffMode) {
+      return this.renderDiffText(text)
+    }
+
     const { scrollTop } = this.element
     try {
+      if (this.diffRendered) {
+        // Leaving diff mode: morphdom can't cleanly reconcile the very
+        // different diff tree (<ins>/<del>, gutters) into the normal one and
+        // leaves stale nodes behind, so start from a blank slate.
+        this.element.textContent = ''
+        this.diffRendered = false
+      }
+      this.element.classList.remove('markdown-preview-diff')
       const [domFragment, done] = await renderer.toDOMFragment(
         text,
         this.getPath(),
@@ -399,6 +425,32 @@ module.exports = class MarkdownPreviewView {
       })
 
       await done(this.element)
+      this.element.classList.remove('loading')
+
+      this.emitter.emit('did-change-markdown')
+      this.element.scrollTop = scrollTop
+    } catch (error) {
+      this.showError(error)
+    }
+  }
+
+  async renderDiffText(text) {
+    const { scrollTop } = this.element
+    try {
+      const diffRenderer = require('./diff-renderer')
+      const fragment = await diffRenderer.toDiffFragment(text, this.getPath())
+
+      this.loading = false
+      this.loaded = true
+
+      // Full replace rather than morphdom: the diff tree changes shape
+      // unpredictably between renders (word merges, gutters), and morphdom
+      // leaves stale nodes that pile up across re-renders/toggles.
+      this.element.textContent = ''
+      this.element.appendChild(fragment)
+      this.diffRendered = true
+
+      this.element.classList.add('markdown-preview-diff')
       this.element.classList.remove('loading')
 
       this.emitter.emit('did-change-markdown')

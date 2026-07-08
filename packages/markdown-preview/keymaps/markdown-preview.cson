@@ -3,6 +3,7 @@
 
 '.markdown-preview':
   'ctrl-shift-m': 'markdown-preview:toggle'
+  'ctrl-shift-d': 'markdown-preview:toggle-diff'
   'alt-left': 'markdown-preview:go-back'
   'alt-right': 'markdown-preview:go-forward'
 

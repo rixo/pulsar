@@ -20,19 +20,21 @@
     border-radius: 2px;
   }
 
-  // Block gutters: colored left border marking where the change lives.
+  // Block gutters: colored left bar marking where the change lives. Drawn with
+  // an inset box-shadow rather than `border-left` so it isn't picked up by
+  // inline elements that use `border: inherit` (e.g. `code` in GitHub style).
   .diff-block-added {
-    border-left: 3px solid @diff-added;
+    box-shadow: inset 3px 0 0 @diff-added;
     padding-left: 0.6em;
   }
 
   .diff-block-removed {
-    border-left: 3px solid @diff-removed;
+    box-shadow: inset 3px 0 0 @diff-removed;
     padding-left: 0.6em;
   }
 
   .diff-block-changed {
-    border-left: 3px solid mix(@diff-added, @diff-removed, 50%);
+    box-shadow: inset 3px 0 0 mix(@diff-added, @diff-removed, 50%);
     padding-left: 0.6em;
   }
 

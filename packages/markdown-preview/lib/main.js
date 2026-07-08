@@ -1,5 +1,10 @@
+const path = require('path')
 const fs = require('fs-plus')
 const { CompositeDisposable } = require('atom')
+
+// Extensions that open as a preview by default (excludes `txt`, which the
+// tree-view command allows but which is too broad for default-open behavior).
+const PREVIEW_EXTENSIONS = ['markdown', 'md', 'mdown', 'mkd', 'mkdown', 'ron']
 
 let MarkdownPreviewView = null
 let renderer = null
@@ -77,6 +82,14 @@ module.exports = {
       })
     )
 
+    // Allow toggling back to the editable source while a preview is focused
+    // (the grammar-scoped `atom-text-editor` command above doesn't match here).
+    this.disposables.add(
+      atom.commands.add('.markdown-preview', {
+        'markdown-preview:toggle': () => this.toggle()
+      })
+    )
+
     const previewFile = this.previewFile.bind(this)
     for (const extension of [
       'markdown',
@@ -116,6 +129,28 @@ module.exports = {
         }
       })
     )
+
+    // Default-open: intercept opening a Markdown *file* and show the preview
+    // instead of the editor. `openingSource` is the escape hatch — set while we
+    // deliberately open the editable buffer (see `openSource`).
+    this.disposables.add(
+      atom.workspace.addOpener(uriToOpen => {
+        if (!atom.config.get('markdown-preview.openInPreviewByDefault')) {
+          return
+        }
+        if (this.openingSource) {
+          return
+        }
+        if (uriToOpen.includes('://')) {
+          return
+        }
+        const ext = path.extname(uriToOpen).replace(/^\./, '').toLowerCase()
+        if (!PREVIEW_EXTENSIONS.includes(ext)) {
+          return
+        }
+        return this.createMarkdownPreviewView({ filePath: uriToOpen })
+      })
+    )
   },
 
   deactivate() {
@@ -133,9 +168,10 @@ module.exports = {
   },
 
   toggle() {
-    if (isMarkdownPreviewView(atom.workspace.getActivePaneItem())) {
-      atom.workspace.destroyActivePaneItem()
-      return
+    // From a preview: switch to the editable source in the same pane.
+    const activeItem = atom.workspace.getActivePaneItem()
+    if (isMarkdownPreviewView(activeItem)) {
+      return this.openSource(activeItem.getPath())
     }
 
     const editor = atom.workspace.getActiveTextEditor()
@@ -148,9 +184,25 @@ module.exports = {
       return
     }
 
-    if (!this.removePreviewForEditor(editor)) {
-      return this.addPreviewForEditor(editor)
+    // From an editor: switch to its preview in the same pane (activated).
+    // Jumps to an existing preview if one is already open.
+    return atom.workspace.open(this.uriForEditor(editor), {
+      searchAllPanes: true
+    })
+  },
+
+  // Open the editable source buffer for `filePath`, bypassing the
+  // default-preview opener so we actually get the editor.
+  openSource(filePath) {
+    if (!filePath) {
+      return
     }
+    this.openingSource = true
+    return Promise.resolve(
+      atom.workspace.open(filePath, { searchAllPanes: true })
+    ).finally(() => {
+      this.openingSource = false
+    })
   },
 
   uriForEditor(editor) {

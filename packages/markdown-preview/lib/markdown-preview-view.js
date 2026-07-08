@@ -250,6 +250,51 @@ module.exports = class MarkdownPreviewView {
       })
     )
 
+    // Single-click a relative link to a local file: resolve it against the
+    // previewed file's directory. Markdown targets open as a preview; anything
+    // else opens normally. External links (http, mailto, atom, …) and in-page
+    // anchors keep their default behavior.
+    const onLinkClick = event => {
+      const link = event.target.closest('a')
+      if (link == null || !this.element.contains(link)) {
+        return
+      }
+      const href = link.getAttribute('href')
+      if (!href || href.startsWith('#')) {
+        return
+      }
+      if (/^[a-z][a-z0-9+.-]*:/i.test(href)) {
+        // Has a URI scheme (http:, mailto:, atom:, file:, …) — not a relative
+        // path; let the default handler deal with it.
+        return
+      }
+      const base = this.getPath()
+      if (!base) {
+        return
+      }
+      event.preventDefault()
+      let [rel] = href.split('#')
+      try {
+        rel = decodeURI(rel)
+      } catch (e) {
+        // Keep the raw value if it isn't valid URI-encoded text.
+      }
+      const target = path.resolve(path.dirname(base), rel)
+      if (/\.(md|markdown|mdown|mkd|mkdown|ron)$/i.test(target)) {
+        atom.workspace.open(`markdown-preview://${encodeURI(target)}`, {
+          searchAllPanes: true
+        })
+      } else {
+        atom.workspace.open(target)
+      }
+    }
+    this.element.addEventListener('click', onLinkClick)
+    this.disposables.add(
+      new Disposable(() =>
+        this.element.removeEventListener('click', onLinkClick)
+      )
+    )
+
     document.onselectionchange = () => {
       const selection = window.getSelection()
       const selectedNode = selection.baseNode

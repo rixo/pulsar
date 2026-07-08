@@ -49,6 +49,12 @@
       "default": true,
       "description": "Open the preview in a split pane. If disabled, the preview is opened in a new tab in the same pane."
     },
+    "openInPreviewByDefault": {
+      "order": 8,
+      "type": "boolean",
+      "default": true,
+      "description": "Open Markdown files as a rendered preview instead of the editor. Use `markdown-preview:toggle` (`ctrl-shift-m`) to switch between the preview and the editable source."
+    },
     "allowUnsafeProtocols": {
       "order": 4,
       "type": "boolean",

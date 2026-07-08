@@ -82,11 +82,24 @@ module.exports = {
       })
     )
 
-    // Allow toggling back to the editable source while a preview is focused
-    // (the grammar-scoped `atom-text-editor` command above doesn't match here).
+    // Browser-like navigation history across previews (populated as the user
+    // follows internal links). `history` holds preview URIs; `historyIndex`
+    // is the current position.
+    this.history = []
+    this.historyIndex = -1
+    this.disposables.add(
+      atom.workspace.onDidStopChangingActivePaneItem(item =>
+        this.recordHistory(item)
+      )
+    )
+
+    // Commands available while a preview is focused (the grammar-scoped
+    // `atom-text-editor` commands above don't match here).
     this.disposables.add(
       atom.commands.add('.markdown-preview', {
-        'markdown-preview:toggle': () => this.toggle()
+        'markdown-preview:toggle': () => this.toggle(),
+        'markdown-preview:go-back': () => this.goBack(),
+        'markdown-preview:go-forward': () => this.goForward()
       })
     )
 
@@ -202,6 +215,44 @@ module.exports = {
       atom.workspace.open(filePath, { searchAllPanes: true })
     ).finally(() => {
       this.openingSource = false
+    })
+  },
+
+  // Record a preview activation in the navigation history. Back/forward move
+  // `historyIndex` to the target *before* opening it, so the resulting
+  // activation lands on an entry that already equals the current one and is
+  // ignored here — no re-push, no need for a separate "navigating" flag.
+  recordHistory(item) {
+    if (!isMarkdownPreviewView(item)) {
+      return
+    }
+    const uri = item.getURI()
+    if (!uri || uri === this.history[this.historyIndex]) {
+      return
+    }
+    // Drop any forward entries, then push the new location.
+    this.history = this.history.slice(0, this.historyIndex + 1)
+    this.history.push(uri)
+    this.historyIndex = this.history.length - 1
+  },
+
+  goBack() {
+    if (this.historyIndex > 0) {
+      this.historyIndex--
+      this.openHistoryEntry()
+    }
+  },
+
+  goForward() {
+    if (this.historyIndex < this.history.length - 1) {
+      this.historyIndex++
+      this.openHistoryEntry()
+    }
+  },
+
+  openHistoryEntry() {
+    return atom.workspace.open(this.history[this.historyIndex], {
+      searchAllPanes: true
     })
   },
 

@@ -70,6 +70,12 @@
       "minimum": 0,
       "description": "In diff mode, merge word-level changes separated by fewer than this many unchanged words into a single removed/added chunk (a coarser, line-like diff). Set to 0 to keep the raw word-level diff."
     },
+    "diffAgainstStaged": {
+      "order": 11,
+      "type": "boolean",
+      "default": false,
+      "description": "In diff mode, compare the working copy against the staged (index) version — what `git diff` shows — instead of the last commit (HEAD)."
+    },
     "allowUnsafeProtocols": {
       "order": 4,
       "type": "boolean",

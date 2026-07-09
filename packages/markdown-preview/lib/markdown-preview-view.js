@@ -245,6 +245,23 @@ module.exports = class MarkdownPreviewView {
     )
 
     this.disposables.add(
+      atom.config.onDidChange('markdown-preview.diffAgainstStaged', () => {
+        if (this.diffMode) this.renderMarkdown()
+      })
+    )
+
+    // Refresh the diff when git state changes (staging, unstaging, committing),
+    // since those alter the base we diff against without touching the buffer.
+    const refreshDiffOnGitChange = _.debounce(() => {
+      if (this.diffMode) this.renderMarkdown()
+    }, 300)
+    for (const repo of atom.project.getRepositories()) {
+      if (repo) {
+        this.disposables.add(repo.onDidChangeStatuses(refreshDiffOnGitChange))
+      }
+    }
+
+    this.disposables.add(
       atom.config.observe('markdown-preview.gitHubStyleMode', gitHubStyleMode => {
         this.gitHubStyleMode = gitHubStyleMode
         if (this.useGitHubStyle) {

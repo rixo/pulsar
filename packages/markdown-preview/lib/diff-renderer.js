@@ -4,27 +4,30 @@ const { execFileSync } = require('child_process')
 const renderer = require('./renderer')
 const htmldiff = require('node-htmldiff')
 
-// Read the `HEAD` version of `filePath` from git. Returns the file's content at
-// HEAD, or `null` when the file is untracked / new / not in a repo.
+// Read the base version of `filePath` from git to diff the working copy
+// against. `base` is 'head' (committed — `HEAD:path`) or 'index' (staged, what
+// `git diff` compares against by default — `:path`). Returns the content, or
+// `null` when the file is untracked / new / not in a repo.
 //
 // This is intentionally *synchronous*: an async `child_process` callback can
 // fire after the preview's renderer window has been torn down (e.g. during a
 // reload), which crashes Electron with `MakeCallback ... env != nullptr`. A
 // sync call completes before teardown, so there's no dangling callback.
-function gitShowHead(filePath) {
+function gitShowBase(filePath, base) {
   const cwd = path.dirname(filePath)
+  const ref = base === 'index' ? '' : 'HEAD' // ':path' = index, 'HEAD:path' = committed
   try {
     const top = execFileSync('git', ['-C', cwd, 'rev-parse', '--show-toplevel'], {
       encoding: 'utf8'
     }).trim()
     const rel = path.relative(top, filePath)
-    return execFileSync('git', ['-C', top, 'show', `HEAD:${rel}`], {
+    return execFileSync('git', ['-C', top, 'show', `${ref}:${rel}`], {
       encoding: 'utf8',
       maxBuffer: 50 * 1024 * 1024,
       stdio: ['ignore', 'pipe', 'ignore']
     })
   } catch (e) {
-    // Not a repo, or path not in HEAD (new file) — treat as empty so
+    // Not a repo, or path not in the base tree (new file) — treat as empty so
     // everything shows as added.
     return null
   }
@@ -155,7 +158,10 @@ function addDiffGutters(root) {
 // detached DOM fragment (code blocks left as plain `<pre>`; no editor
 // highlighting in diff mode for now).
 exports.toDiffFragment = async function (newSource, filePath) {
-  const oldSource = filePath ? gitShowHead(filePath) : null
+  const base = atom.config.get('markdown-preview.diffAgainstStaged')
+    ? 'index'
+    : 'head'
+  const oldSource = filePath ? gitShowBase(filePath, base) : null
 
   const oldHTML = renderer.renderHTMLString(oldSource ?? '')
   const newHTML = renderer.renderHTMLString(newSource ?? '')

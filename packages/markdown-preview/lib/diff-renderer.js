@@ -3,6 +3,7 @@ const { execFileSync } = require('child_process')
 
 const renderer = require('./renderer')
 const htmldiff = require('node-htmldiff')
+const Diff = require('diff')
 
 // Read the base version of `filePath` from git to diff the working copy
 // against. `base` is 'head' (committed — `HEAD:path`) or 'index' (staged, what
@@ -30,6 +31,39 @@ function gitShowBase(filePath, base) {
     // Not a repo, or path not in the base tree (new file) — treat as empty so
     // everything shows as added.
     return null
+  }
+}
+
+// htmldiff matches whole whitespace-delimited tokens, so `monsieur` vs
+// `monsieur,` (comma attached) don't match and it emits a dumb
+// `<del>monsieur</del><ins>monsieur, and madame</ins>` replacement. Re-diff each
+// adjacent del/ins text pair at the word level (jsdiff) to pull out the shared
+// text and leave a minimal change. Only pure-text pairs are refined, so inline
+// formatting inside a change is left untouched.
+function refineReplacements(root) {
+  for (const del of Array.from(root.querySelectorAll('del'))) {
+    const ins = del.nextSibling
+    if (!ins || ins.nodeName !== 'INS') continue
+    if (del.children.length || ins.children.length) continue
+
+    const parts = Diff.diffWordsWithSpace(del.textContent, ins.textContent)
+    const fragment = document.createDocumentFragment()
+    for (const part of parts) {
+      if (part.added) {
+        const node = document.createElement('ins')
+        node.textContent = part.value
+        fragment.appendChild(node)
+      } else if (part.removed) {
+        const node = document.createElement('del')
+        node.textContent = part.value
+        fragment.appendChild(node)
+      } else {
+        fragment.appendChild(document.createTextNode(part.value))
+      }
+    }
+    del.parentNode.insertBefore(fragment, del)
+    ins.remove()
+    del.remove()
   }
 }
 
@@ -174,6 +208,7 @@ exports.toDiffFragment = async function (newSource, filePath) {
   template.innerHTML = merged.trim()
   const fragment = template.content.cloneNode(true)
 
+  refineReplacements(fragment)
   mergeShortGaps(fragment, atom.config.get('markdown-preview.diffMergeMaxWords'))
   renderer.resolveImagePaths(fragment, filePath)
   addDiffGutters(fragment)

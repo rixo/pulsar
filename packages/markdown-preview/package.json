@@ -66,9 +66,9 @@
     "diffMergeMaxWords": {
       "order": 10,
       "type": "integer",
-      "default": 5,
+      "default": 0,
       "minimum": 0,
-      "description": "In diff mode, merge word-level changes separated by fewer than this many unchanged words into a single removed/added chunk (a coarser, line-like diff). Set to 0 to keep the raw word-level diff."
+      "description": "In diff mode, merge word-level changes separated by fewer than this many unchanged words into a single removed/added chunk (a coarser, line-like diff). 0 keeps the (refined) word-level diff."
     },
     "diffAgainstStaged": {
       "order": 11,

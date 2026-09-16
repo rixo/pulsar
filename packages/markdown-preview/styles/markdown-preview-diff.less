@@ -38,6 +38,23 @@
     padding-left: 0.6em;
   }
 
+  // Rewritten block, split into two whole halves by `splitRewrittenBlocks`:
+  // the inline marks are gone, so the block itself carries the color. No
+  // strikethrough — a whole struck-through paragraph is the unreadable thing
+  // this is meant to avoid.
+  .diff-block-whole {
+    border-radius: 2px;
+
+    &.diff-block-removed {
+      background-color: fade(@diff-removed, 10%);
+      opacity: 0.75;
+    }
+
+    &.diff-block-added {
+      background-color: fade(@diff-added, 10%);
+    }
+  }
+
   .diff-source-only-banner {
     margin: 0 0 1em;
     padding: 0.5em 0.8em;

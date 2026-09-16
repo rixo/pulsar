@@ -70,8 +70,16 @@
       "minimum": 0,
       "description": "In diff mode, merge word-level changes separated by fewer than this many unchanged words into a single removed/added chunk (a coarser, line-like diff). 0 keeps the (refined) word-level diff."
     },
-    "diffAgainstStaged": {
+    "diffRewriteThreshold": {
       "order": 11,
+      "type": "integer",
+      "default": 50,
+      "minimum": 0,
+      "maximum": 100,
+      "description": "In diff mode, when more than this percentage of a paragraph's text changed, show the old and the new paragraph whole (one removed, one added) instead of a word diff that interleaves them. 0 always keeps the word diff."
+    },
+    "diffAgainstStaged": {
+      "order": 12,
       "type": "boolean",
       "default": false,
       "description": "In diff mode, compare the working copy against the staged (index) version — what `git diff` shows — instead of the last commit (HEAD)."

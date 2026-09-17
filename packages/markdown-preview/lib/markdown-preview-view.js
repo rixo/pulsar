@@ -81,9 +81,67 @@ module.exports = class MarkdownPreviewView {
         },
         'core:move-to-bottom': () => {
           this.element.scrollTop = this.element.scrollHeight
-        }
+        },
+        'markdown-preview:go-to-next-change': () => this.moveToChange(1),
+        'markdown-preview:go-to-previous-change': () => this.moveToChange(-1)
       })
     )
+  }
+
+  // Changed blocks, grouped into hunks: `diff-renderer` marks each block, and a
+  // rewrite shows up as two adjacent blocks (old then new) — one hunk, one stop.
+  // Only the outermost marked block of a nest counts (`li > p`).
+  getChangeHunks() {
+    const marked = Array.from(
+      this.element.querySelectorAll(
+        '.diff-block-added, .diff-block-removed, .diff-block-changed'
+      )
+    ).filter(
+      (el, _i, all) => !all.some(other => other !== el && other.contains(el))
+    )
+
+    const hunks = []
+    let previous = null
+    for (const el of marked) {
+      if (!previous || el.previousElementSibling !== previous) hunks.push(el)
+      previous = el
+    }
+    return hunks
+  }
+
+  // Scroll to the next (`direction` 1) or previous (-1) change, wrapping around
+  // at the ends. Asking for a change implies wanting to see changes, so this
+  // turns diff mode on when it's off (and renders) rather than doing nothing.
+  // Beeps when there is genuinely nothing to jump to.
+  async moveToChange(direction) {
+    if (!this.diffMode) {
+      // The config observer flips this.diffMode and re-renders; await a render
+      // of our own so the marked blocks exist before we measure them.
+      atom.config.set('markdown-preview.showDiff', true)
+      await this.renderMarkdown()
+    }
+
+    const hunks = this.getChangeHunks()
+    if (hunks.length === 0) {
+      atom.beep()
+      return
+    }
+
+    const viewTop = this.element.getBoundingClientRect().top
+    const offsetOf = el =>
+      el.getBoundingClientRect().top - viewTop + this.element.scrollTop
+    // Tolerance so the hunk we're parked on doesn't count as the next one.
+    const current = this.element.scrollTop + 2
+
+    const offsets = hunks.map(offsetOf)
+    let target =
+      direction > 0
+        ? offsets.find(top => top > current)
+        : [...offsets].reverse().find(top => top < current - 4)
+    if (target == null) target = direction > 0 ? offsets[0] : offsets.pop()
+
+    // Leave a little air above, like the editor's diff jump does.
+    this.element.scrollTop = Math.max(0, target - 16)
   }
 
   onDidChangeTitle(callback) {

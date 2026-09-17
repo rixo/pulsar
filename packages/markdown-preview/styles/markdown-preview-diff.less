@@ -38,6 +38,18 @@
     padding-left: 0.6em;
   }
 
+  // The document's own `~~strikethrough~~` (and raw <ins>/<s>), restored after
+  // diffing: it's content, not a change — plain, no diff tint.
+  del.md-authored-mark,
+  ins.md-authored-mark,
+  s.md-authored-mark {
+    background-color: transparent;
+  }
+
+  ins.md-authored-mark {
+    text-decoration: underline;
+  }
+
   // Rewritten block, split into two whole halves by `splitRewrittenBlocks`:
   // the inline marks are gone, so the block itself carries the color. No
   // strikethrough — a whole struck-through paragraph is the unreadable thing

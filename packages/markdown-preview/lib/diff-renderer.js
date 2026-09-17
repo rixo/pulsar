@@ -250,11 +250,40 @@ function splitRewrittenBlocks(root, ratio) {
   }
 }
 
+// Markdown's own `~~strikethrough~~` renders as `<del>` (and `<ins>`/`<s>` can
+// come from raw HTML in the source) — the very tags htmldiff uses to mark
+// changes. Left alone, an authored strikethrough reads as "this was deleted"
+// and gets dropped from the new version of its block. Swap authored marks for
+// neutral spans before diffing; `restoreAuthoredMarks` puts them back at the
+// very end, once every pass that looks for ins/del has run.
+function neutralizeAuthoredMarks(html) {
+  // A plain div, not a <template>: we mutate the parsed nodes and serialize
+  // them straight back, with no content-fragment round-trip in between.
+  const holder = document.createElement('div')
+  holder.innerHTML = html.trim()
+  for (const el of Array.from(holder.querySelectorAll('del, ins, s'))) {
+    const span = document.createElement('span')
+    span.setAttribute('data-md-mark', el.tagName.toLowerCase())
+    while (el.firstChild) span.appendChild(el.firstChild)
+    el.parentNode.replaceChild(span, el)
+  }
+  return holder.innerHTML
+}
+
+function restoreAuthoredMarks(root) {
+  for (const span of Array.from(root.querySelectorAll('[data-md-mark]'))) {
+    const el = document.createElement(span.getAttribute('data-md-mark'))
+    el.className = 'md-authored-mark' // so diff styling leaves it alone
+    while (span.firstChild) el.appendChild(span.firstChild)
+    span.parentNode.replaceChild(el, span)
+  }
+}
+
 // Parse rendered HTML into its top-level blocks — the units we align.
 function blockUnits(html) {
-  const template = document.createElement('template')
-  template.innerHTML = html.trim()
-  return Array.from(template.content.children)
+  const holder = document.createElement('div')
+  holder.innerHTML = html.trim()
+  return Array.from(holder.children)
 }
 
 // Identity for sequence alignment: same tag, same text. Whitespace is
@@ -317,9 +346,9 @@ function pairBlocks(removed, added) {
 // Word-diff two matching blocks against each other, in isolation, so a
 // neighbour's edits can never bleed across the block boundary.
 function diffBlockPair(oldEl, newEl) {
-  const template = document.createElement('template')
-  template.innerHTML = htmldiff(oldEl.outerHTML, newEl.outerHTML).trim()
-  return Array.from(template.content.childNodes)
+  const holder = document.createElement('div')
+  holder.innerHTML = htmldiff(oldEl.outerHTML, newEl.outerHTML).trim()
+  return Array.from(holder.childNodes)
 }
 
 function wholeBlock(el, className) {
@@ -436,8 +465,12 @@ exports.toDiffFragment = async function (newSource, filePath) {
 
   // Align blocks first, then word-diff inside matched ones: <ins>/<del> wrap
   // changes while preserving structure. This shows removed (old) and added
-  // (new) together.
-  const fragment = alignBlocks(oldHTML, newHTML)
+  // (new) together. Authored marks are parked as spans for the whole pipeline,
+  // so nothing below mistakes a `~~strikethrough~~` for a deletion.
+  const fragment = alignBlocks(
+    neutralizeAuthoredMarks(oldHTML),
+    neutralizeAuthoredMarks(newHTML)
+  )
 
   refineReplacements(fragment)
   mergeShortGaps(fragment, atom.config.get('markdown-preview.diffMergeMaxWords'))
@@ -447,6 +480,7 @@ exports.toDiffFragment = async function (newSource, filePath) {
   )
   renderer.resolveImagePaths(fragment, filePath)
   addDiffGutters(fragment)
+  restoreAuthoredMarks(fragment)
 
   // Source-only change detection: the file changed but rendered identically
   // (e.g. a reflow / prettier reformat). Surface it since the diff shows

@@ -45,6 +45,7 @@ function refineReplacements(root) {
     const ins = del.nextSibling
     if (!ins || ins.nodeName !== 'INS') continue
     if (del.children.length || ins.children.length) continue
+    if (del.closest('pre')) continue // diffed by line already
 
     const parts = Diff.diffWordsWithSpace(del.textContent, ins.textContent)
     const fragment = document.createDocumentFragment()
@@ -166,6 +167,24 @@ function unwrap(el) {
   parent.removeChild(el)
 }
 
+// Reduce merged diff markup (in place) to one of its two versions, keeping
+// inline formatting: `side` 'del' leaves the old text (everything minus the
+// insertions), 'ins' the new one. Elements marked via `data-diff-node` are
+// dropped whole on the side they don't belong to, and keep their tag (minus
+// htmldiff's bookkeeping attributes) on the side they do.
+function keepSide(root, side) {
+  const gone = side === 'del' ? 'ins' : 'del'
+  for (const el of Array.from(root.querySelectorAll(gone))) el.remove()
+  for (const el of Array.from(root.querySelectorAll(side))) unwrap(el)
+  for (const el of Array.from(root.querySelectorAll('[data-diff-node]'))) {
+    if (el.getAttribute('data-diff-node') === gone) el.remove()
+    else el.removeAttribute('data-diff-node')
+  }
+  for (const el of Array.from(root.querySelectorAll('[data-operation-index]'))) {
+    el.removeAttribute('data-operation-index')
+  }
+}
+
 // Word-diffing a block that was *rewritten* (rather than edited) shreds it into
 // alternating del/ins fragments that read as noise: the old and new sentences
 // are interleaved word by word and neither can be read. Past a churn threshold,
@@ -210,32 +229,11 @@ function splitRewrittenBlocks(root, ratio) {
     const changed = marks.reduce((n, m) => n + m.textContent.trim().length, 0)
     if (changed / total < ratio) continue
 
-    // Reconstruct both versions from the merged markup, keeping inline
-    // formatting: the old block is everything minus the insertions, the new one
-    // everything minus the deletions. Elements marked via `data-diff-node` are
-    // dropped whole on the side they don't belong to, and keep their tag (minus
-    // htmldiff's bookkeeping attributes) on the side they do.
-    const strip = (clone, gone, kept) => {
-      for (const el of Array.from(clone.querySelectorAll(gone.toUpperCase())))
-        el.remove()
-      for (const el of Array.from(clone.querySelectorAll(kept.toUpperCase())))
-        unwrap(el)
-      for (const el of Array.from(clone.querySelectorAll('[data-diff-node]'))) {
-        if (el.getAttribute('data-diff-node') === gone) el.remove()
-        else el.removeAttribute('data-diff-node')
-      }
-      for (const el of Array.from(
-        clone.querySelectorAll('[data-operation-index]')
-      )) {
-        el.removeAttribute('data-operation-index')
-      }
-    }
-
     const oldBlock = block.cloneNode(true)
-    strip(oldBlock, 'ins', 'del')
+    keepSide(oldBlock, 'del')
 
     const newBlock = block.cloneNode(true)
-    strip(newBlock, 'del', 'ins')
+    keepSide(newBlock, 'ins')
 
     // Whitespace around removed marks can leave doubled spaces behind.
     oldBlock.normalize()
@@ -248,6 +246,178 @@ function splitRewrittenBlocks(root, ratio) {
     block.parentNode.insertBefore(newBlock, block)
     block.remove()
   }
+}
+
+// The text nodes under `root`, in document order.
+function textNodes(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT)
+  const nodes = []
+  while (walker.nextNode()) nodes.push(walker.currentNode)
+  return nodes
+}
+
+// A Range over `root`'s text from character `start` to `end`.
+function textRange(root, start, end) {
+  const range = document.createRange()
+  range.selectNodeContents(root)
+  let at = 0
+  let started = false
+  for (const node of textNodes(root)) {
+    const next = at + node.data.length
+    if (!started && start < next) {
+      range.setStart(node, start - at)
+      started = true
+    }
+    if (started && end <= next) {
+      range.setEnd(node, end - at)
+      break
+    }
+    at = next
+  }
+  return range
+}
+
+// The formatted content of `root`'s text from `start` to `end`. Cloning a range
+// copies the inline elements it cuts through, empty ones included — drop those.
+function textSlice(root, start, end) {
+  const fragment = textRange(root, start, end).cloneContents()
+  for (const el of Array.from(fragment.querySelectorAll('*')).reverse()) {
+    if (!el.textContent && !el.matches('img, br') && !el.querySelector('img, br'))
+      el.remove()
+  }
+  return fragment
+}
+
+// Which side of the diff a text node belongs to inside `block`: 'ins', 'del',
+// or null for text both versions share.
+function sideOf(node, block) {
+  for (let el = node.parentElement; el && el !== block; el = el.parentElement) {
+    if (el.nodeName === 'INS') return 'ins'
+    if (el.nodeName === 'DEL') return 'del'
+    const marked = el.getAttribute('data-diff-node')
+    if (marked) return marked
+  }
+  return null
+}
+
+// Punctuation that closes a sentence or a clause — with any closing quote or
+// bracket, and only before a space (so `1.5`, `e.g.x` or `a,b` don't count).
+const CLAUSE_END = /[.!?;:,–—]["'’”)\]]*(?=\s|$)/g
+
+const isWordChar = c => c != null && /[\p{L}\p{N}_]/u.test(c)
+
+// Prose has structure a word diff ignores: a sentence rewritten mid-way comes
+// out as old and new words woven together, with a few shared ones ("the",
+// "reader") stitching the soup. Punctuation that *both* versions share marks
+// where the two texts are back in step, so cut the block into clauses there and
+// look at each on its own. A clause whose changed part (first change to last)
+// is mostly change becomes one replacement — the old wording, then the new —
+// with the shared words at its ends kept outside. Clauses that only got a light
+// edit keep their word diff.
+//
+// `ratio` is the same churn fraction as `splitRewrittenBlocks`, measured on
+// that changed part; <= 0 disables the pass.
+function coarsenClauses(root, ratio) {
+  if (ratio <= 0) return
+
+  const blocks = Array.from(root.querySelectorAll(BLOCK_SELECTOR)).filter(
+    el => el.querySelector(BLOCK_SELECTOR) == null
+  )
+
+  for (const block of blocks) {
+    if (!block.querySelector('ins, del, [data-diff-node]')) continue
+
+    const spans = []
+    const cuts = [0]
+    let at = 0
+    for (const node of textNodes(block)) {
+      const side = sideOf(node, block)
+      if (!side) {
+        for (const m of node.data.matchAll(CLAUSE_END)) {
+          cuts.push(at + m.index + m[0].length)
+        }
+      }
+      spans.push({ node, side, start: at, end: at + node.data.length })
+      at += node.data.length
+    }
+    cuts.push(at)
+
+    // Last clause first: rewriting one only shifts the offsets after it.
+    let changed = false
+    for (let k = cuts.length - 2; k >= 0; k--) {
+      if (coarsenClause(block, spans, cuts[k], cuts[k + 1], ratio)) changed = true
+    }
+    if (changed) block.normalize()
+  }
+}
+
+// See `coarsenClauses`. Returns whether the clause [start, end) was rewritten.
+function coarsenClause(block, spans, start, end, ratio) {
+  const inside = spans.filter(s => s.end > start && s.start < end)
+  const marked = inside.filter(s => s.side)
+  if (!marked.some(s => s.side === 'ins')) return false
+  if (!marked.some(s => s.side === 'del')) return false
+
+  // Churn over the changed part only: a long untouched lead-in says nothing
+  // about how readable the edit is.
+  const from = marked[0].start
+  const to = marked[marked.length - 1].end
+  let changedChars = 0
+  let commonChars = 0
+  for (const s of inside) {
+    const text = s.node.data.slice(
+      Math.max(from, s.start) - s.start,
+      Math.min(to, s.end) - s.start
+    )
+    const n = text.replace(/\s+/g, '').length
+    if (s.side) changedChars += n
+    else commonChars += n
+  }
+  // Nothing shared in between: already a plain replacement.
+  if (!commonChars) return false
+  if (changedChars / (changedChars + commonChars) < ratio) return false
+
+  const range = textRange(block, start, end)
+  const oldSide = document.createElement('div')
+  oldSide.appendChild(range.cloneContents())
+  const newSide = oldSide.cloneNode(true)
+  keepSide(oldSide, 'del')
+  keepSide(newSide, 'ins')
+  const a = oldSide.textContent
+  const b = newSide.textContent
+
+  // Shared words at both ends stay outside the replacement — whole words only.
+  let head = 0
+  while (head < a.length && head < b.length && a[head] === b[head]) head++
+  while (head > 0 && isWordChar(a[head - 1]) && (isWordChar(a[head]) || isWordChar(b[head])))
+    head--
+  let tail = 0
+  const maxTail = Math.min(a.length, b.length) - head
+  while (tail < maxTail && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++
+  while (
+    tail > 0 &&
+    isWordChar(a[a.length - tail]) &&
+    (isWordChar(a[a.length - tail - 1]) || isWordChar(b[b.length - tail - 1]))
+  )
+    tail--
+
+  const replacement = document.createDocumentFragment()
+  replacement.appendChild(textSlice(newSide, 0, head))
+  if (head < a.length - tail) {
+    const del = document.createElement('del')
+    del.appendChild(textSlice(oldSide, head, a.length - tail))
+    replacement.appendChild(del)
+  }
+  if (head < b.length - tail) {
+    const ins = document.createElement('ins')
+    ins.appendChild(textSlice(newSide, head, b.length - tail))
+    replacement.appendChild(ins)
+  }
+  replacement.appendChild(textSlice(newSide, b.length - tail, b.length))
+
+  range.deleteContents()
+  range.insertNode(replacement)
+  return true
 }
 
 // Markdown's own `~~strikethrough~~` renders as `<del>` (and `<ins>`/`<s>` can
@@ -343,9 +513,73 @@ function pairBlocks(removed, added) {
   return pairs
 }
 
+// Share of two strings' non-space text that a word diff keeps in common, 0..1.
+function sharedRatio(a, b) {
+  let common = 0
+  let changed = 0
+  for (const part of Diff.diffWordsWithSpace(a, b)) {
+    const n = part.value.replace(/\s+/g, '').length
+    if (part.added || part.removed) changed += n
+    else common += 2 * n // present on both sides
+  }
+  return common + changed ? common / (common + changed) : 1
+}
+
+// Code is lines, not prose: diff it line by line, so a change spans the lines it
+// touches and nothing else (a word diff happily starts an inserted line in the
+// middle of its neighbour, and treats indentation as interchangeable spaces).
+// A changed run that replaces as many lines as it removes is word-diffed line
+// against line where those still mostly match; otherwise lines show whole.
+// Highlighting is plain in diff mode, so the block's text is all there is.
+function diffCodeBlock(oldEl, newEl) {
+  const out = newEl.cloneNode(true)
+  const target = out.querySelector('code') || out
+  target.textContent = ''
+
+  const mark = (tag, text) => {
+    const el = document.createElement(tag)
+    el.textContent = text
+    target.appendChild(el)
+  }
+
+  const parts = Diff.diffLines(oldEl.textContent, newEl.textContent)
+  for (let i = 0; i < parts.length; i++) {
+    const part = parts[i]
+    const next = parts[i + 1]
+    if (part.removed && next && next.added && part.count === next.count) {
+      const oldLines = part.value.split(/(?<=\n)/)
+      const newLines = next.value.split(/(?<=\n)/)
+      oldLines.forEach((oldLine, k) => {
+        const newLine = newLines[k]
+        if (sharedRatio(oldLine, newLine) < 0.5) {
+          mark('del', oldLine)
+          mark('ins', newLine)
+          return
+        }
+        for (const word of Diff.diffWordsWithSpace(oldLine, newLine)) {
+          if (word.added) mark('ins', word.value)
+          else if (word.removed) mark('del', word.value)
+          else target.appendChild(document.createTextNode(word.value))
+        }
+      })
+      i++
+    } else if (part.removed) {
+      mark('del', part.value)
+    } else if (part.added) {
+      mark('ins', part.value)
+    } else {
+      target.appendChild(document.createTextNode(part.value))
+    }
+  }
+  return out
+}
+
 // Word-diff two matching blocks against each other, in isolation, so a
 // neighbour's edits can never bleed across the block boundary.
 function diffBlockPair(oldEl, newEl) {
+  if (oldEl.nodeName === 'PRE' && newEl.nodeName === 'PRE') {
+    return [diffCodeBlock(oldEl, newEl)]
+  }
   const holder = document.createElement('div')
   holder.innerHTML = htmldiff(oldEl.outerHTML, newEl.outerHTML).trim()
   return Array.from(holder.childNodes)
@@ -475,6 +709,10 @@ exports.toDiffFragment = async function (newSource, filePath) {
   refineReplacements(fragment)
   mergeShortGaps(fragment, atom.config.get('markdown-preview.diffMergeMaxWords'))
   splitRewrittenBlocks(
+    fragment,
+    atom.config.get('markdown-preview.diffRewriteThreshold') / 100
+  )
+  coarsenClauses(
     fragment,
     atom.config.get('markdown-preview.diffRewriteThreshold') / 100
   )

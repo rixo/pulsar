@@ -93,7 +93,8 @@ module.exports = class MarkdownPreviewView {
 
   // Changed blocks, grouped into hunks: `diff-renderer` marks each block, and a
   // rewrite shows up as two adjacent blocks (old then new) — one hunk, one stop.
-  // Only the outermost marked block of a nest counts (`li > p`).
+  // Only the outermost marked block of a nest counts (`li > p`). Each hunk is
+  // the array of its blocks, in document order.
   getChangeHunks() {
     const marked = Array.from(
       this.element.querySelectorAll(
@@ -106,7 +107,11 @@ module.exports = class MarkdownPreviewView {
     const hunks = []
     let previous = null
     for (const el of marked) {
-      if (!previous || el.previousElementSibling !== previous) hunks.push(el)
+      if (previous && el.previousElementSibling === previous) {
+        hunks[hunks.length - 1].push(el)
+      } else {
+        hunks.push([el])
+      }
       previous = el
     }
     return hunks
@@ -148,8 +153,8 @@ module.exports = class MarkdownPreviewView {
     // otherwise keep finding an offset it can never scroll to and never
     // report the end, while `previous` hit it fine off the always-reachable top.
     const maxScroll = this.element.scrollHeight - this.element.clientHeight
-    const landings = hunks.map(el =>
-      Math.min(Math.max(0, offsetOf(el) - 16), maxScroll)
+    const landings = hunks.map(([first]) =>
+      Math.min(Math.max(0, offsetOf(first) - 16), maxScroll)
     )
     // Tolerance so the hunk we're parked on doesn't count as the next one.
     const here = this.element.scrollTop
@@ -158,14 +163,18 @@ module.exports = class MarkdownPreviewView {
         ? landings.find(top => top > here + 2)
         : [...landings].reverse().find(top => top < here - 2)
     if (target == null) {
-      // No wrapping: flash the first / last change to say "that's the end",
-      // or the whole view when that change isn't on screen.
+      // No wrapping: flash the document's very first / last hunk, all of its
+      // blocks, to say "that's the end". Not the one we're parked on, which
+      // at the bottom can be an earlier hunk sharing the clamped landing.
+      // The whole view flashes instead when none of the hunk is on screen.
       const edge = direction > 0 ? hunks[hunks.length - 1] : hunks[0]
-      const rect = edge.getBoundingClientRect()
-      const visible =
-        rect.bottom > viewTop &&
-        rect.top < this.element.getBoundingClientRect().bottom
-      this.flash(visible ? edge : this.element)
+      const viewBottom = this.element.getBoundingClientRect().bottom
+      const visible = edge.some(el => {
+        const rect = el.getBoundingClientRect()
+        return rect.bottom > viewTop && rect.top < viewBottom
+      })
+      if (visible) edge.forEach(el => this.flash(el))
+      else this.flash(this.element)
       return
     }
 

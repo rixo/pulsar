@@ -112,9 +112,10 @@ module.exports = class MarkdownPreviewView {
     return hunks
   }
 
-  // Scroll to the next (`direction` 1) or previous (-1) change, wrapping around
-  // at the ends. Asking for a change implies wanting to see changes, so this
-  // turns diff mode on when it's off (and renders) rather than doing nothing.
+  // Scroll to the next (`direction` 1) or previous (-1) change, flashing
+  // instead of wrapping around at the ends. Asking for a change implies wanting
+  // to see changes, so this turns diff mode on when it's off (and renders)
+  // rather than doing nothing.
   // Beeps when there is genuinely nothing to jump to.
   async moveToChange(direction) {
     if (!this.diffMode) {
@@ -142,23 +143,45 @@ module.exports = class MarkdownPreviewView {
       el.getBoundingClientRect().top - viewTop + this.element.scrollTop
     // Where jumping to a hunk actually lands — with a little air above, like
     // the editor's diff jump does, and clamped to what the document allows.
-    // Comparing landings rather than offsets is what makes the wrap symmetric:
+    // Comparing landings rather than offsets is what makes the ends symmetric:
     // the last hunks of a document share the bottom landing, so `next` would
-    // otherwise keep finding an offset it can never scroll to and stick there,
-    // while `previous` wrapped fine off the always-reachable top.
+    // otherwise keep finding an offset it can never scroll to and never
+    // report the end, while `previous` hit it fine off the always-reachable top.
     const maxScroll = this.element.scrollHeight - this.element.clientHeight
     const landings = hunks.map(el =>
       Math.min(Math.max(0, offsetOf(el) - 16), maxScroll)
     )
     // Tolerance so the hunk we're parked on doesn't count as the next one.
     const here = this.element.scrollTop
-    let target =
+    const target =
       direction > 0
         ? landings.find(top => top > here + 2)
         : [...landings].reverse().find(top => top < here - 2)
-    if (target == null) target = direction > 0 ? landings[0] : landings.pop()
+    if (target == null) {
+      // No wrapping: flash the first / last change to say "that's the end",
+      // or the whole view when that change isn't on screen.
+      const edge = direction > 0 ? hunks[hunks.length - 1] : hunks[0]
+      const rect = edge.getBoundingClientRect()
+      const visible =
+        rect.bottom > viewTop &&
+        rect.top < this.element.getBoundingClientRect().bottom
+      this.flash(visible ? edge : this.element)
+      return
+    }
 
     this.element.scrollTop = target
+  }
+
+  flash(el) {
+    el.classList.remove('markdown-preview-flash')
+    // Force a reflow so the animation restarts on repeated presses.
+    void el.offsetWidth
+    el.classList.add('markdown-preview-flash')
+    el.addEventListener(
+      'animationend',
+      () => el.classList.remove('markdown-preview-flash'),
+      { once: true }
+    )
   }
 
   onDidChangeTitle(callback) {

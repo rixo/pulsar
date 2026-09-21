@@ -76,3 +76,22 @@
     opacity: 0.85;
   }
 }
+
+// `go-to-next/previous-change` past the last / first change: no wrapping, the
+// boundary change (or the whole view, when it's off screen) flashes instead.
+// An outline, since it paints over content and doesn't scroll with it.
+@diff-flash: #58a6ff;
+
+.markdown-preview .markdown-preview-flash {
+  animation: markdown-preview-flash 0.4s ease-out;
+}
+
+.markdown-preview.markdown-preview-flash {
+  animation: markdown-preview-flash 0.4s ease-out;
+  outline-offset: -2px;
+}
+
+@keyframes markdown-preview-flash {
+  0% { outline: 2px solid @diff-flash; }
+  100% { outline: 2px solid transparent; }
+}

@@ -6,6 +6,7 @@ const _ = require('underscore-plus')
 const fs = require('fs-plus')
 
 const renderer = require('./renderer')
+const HeadingBar = require('./heading-bar')
 
 module.exports = class MarkdownPreviewView {
   static deserialize(params) {
@@ -25,6 +26,7 @@ module.exports = class MarkdownPreviewView {
     // it and it survives a reload.
     this.diffMode = atom.config.get('markdown-preview.showDiff')
     this.disposables = new CompositeDisposable()
+    this.headingBar = new HeadingBar(this.element)
     this.registerScrollCommands()
     if (this.editorId != null) {
       this.resolveEditor(this.editorId)
@@ -57,6 +59,7 @@ module.exports = class MarkdownPreviewView {
 
   destroy() {
     this.disposables.dispose()
+    this.headingBar.destroy()
     this.element.remove()
     this.editorCache.destroy()
   }
@@ -127,21 +130,35 @@ module.exports = class MarkdownPreviewView {
       return
     }
 
-    const viewTop = this.element.getBoundingClientRect().top
+    // Measured from under the heading bar, so a change doesn't land behind it.
+    // An empty bar has no height and sits above the viewport: it's the view's
+    // own top that counts then, or the jump would overshoot by that much.
+    const bar = this.headingBar.element
+    const viewTop = Math.max(
+      this.element.getBoundingClientRect().top,
+      bar.isConnected ? bar.getBoundingClientRect().bottom : -Infinity
+    )
     const offsetOf = el =>
       el.getBoundingClientRect().top - viewTop + this.element.scrollTop
+    // Where jumping to a hunk actually lands — with a little air above, like
+    // the editor's diff jump does, and clamped to what the document allows.
+    // Comparing landings rather than offsets is what makes the wrap symmetric:
+    // the last hunks of a document share the bottom landing, so `next` would
+    // otherwise keep finding an offset it can never scroll to and stick there,
+    // while `previous` wrapped fine off the always-reachable top.
+    const maxScroll = this.element.scrollHeight - this.element.clientHeight
+    const landings = hunks.map(el =>
+      Math.min(Math.max(0, offsetOf(el) - 16), maxScroll)
+    )
     // Tolerance so the hunk we're parked on doesn't count as the next one.
-    const current = this.element.scrollTop + 2
-
-    const offsets = hunks.map(offsetOf)
+    const here = this.element.scrollTop
     let target =
       direction > 0
-        ? offsets.find(top => top > current)
-        : [...offsets].reverse().find(top => top < current - 4)
-    if (target == null) target = direction > 0 ? offsets[0] : offsets.pop()
+        ? landings.find(top => top > here + 2)
+        : [...landings].reverse().find(top => top < here - 2)
+    if (target == null) target = direction > 0 ? landings[0] : landings.pop()
 
-    // Leave a little air above, like the editor's diff jump does.
-    this.element.scrollTop = Math.max(0, target - 16)
+    this.element.scrollTop = target
   }
 
   onDidChangeTitle(callback) {
@@ -489,6 +506,8 @@ module.exports = class MarkdownPreviewView {
       let newElement = this.element.cloneNode(false)
       newElement.appendChild(domFragment)
 
+      // Out of the way first, or morphdom could morph the bar into content.
+      this.headingBar.element.remove()
       morphdom(this.element, newElement, {
         onBeforeNodeDiscarded(node) {
           // Don't discard `atom-text-editor` elements despite the fact that
@@ -499,11 +518,16 @@ module.exports = class MarkdownPreviewView {
         }
       })
 
+      this.headingBar.attach()
+
       await done(this.element)
       this.element.classList.remove('loading')
 
       this.emitter.emit('did-change-markdown')
       this.element.scrollTop = scrollTop
+      // `attach` measured the trail at whatever scroll the new content started
+      // at; this is where the reader actually is.
+      this.headingBar.update()
     } catch (error) {
       this.showError(error)
     }
@@ -527,9 +551,11 @@ module.exports = class MarkdownPreviewView {
 
       this.element.classList.add('markdown-preview-diff')
       this.element.classList.remove('loading')
+      this.headingBar.attach()
 
       this.emitter.emit('did-change-markdown')
       this.element.scrollTop = scrollTop
+      this.headingBar.update()
     } catch (error) {
       this.showError(error)
     }

@@ -1,5 +1,5 @@
 // Sticky breadcrumb of the headings the reader is under: `h1 > h2 > h3`.
-// Shown only once the reader is under a heading below the h1.
+// Always shown, from the top of the document on (the h1 mark at least).
 //
 // The bar is a sticky first child of the preview (the preview is its own scroll
 // container), laid over the container's top padding so the page keeps its
@@ -7,8 +7,8 @@
 // bottom — not when it leaves the viewport — so the bar never names a section
 // whose heading is still readable below it.
 //
-// Hovering a trail item below the h1 opens a menu of its siblings (same level,
-// same parent section) to jump to.
+// Hovering a trail item opens a menu of its siblings (same level, same parent
+// section) to jump to. The `#` mark's menu is the whole outline instead.
 //
 // Rendering replaces the preview's children, so the view calls `attach()` after
 // every render to put the bar back and re-collect the headings.
@@ -58,8 +58,10 @@ module.exports = class HeadingBar {
       event.stopPropagation()
       const { trailIndex, menuIndex } = item.dataset
       if (menuIndex != null) {
+        // Before closing: closing forgets the menu's headings.
+        const heading = this.menuHeadings[Number(menuIndex)]
         this.closeMenu()
-        this.scrollTo(this.menuHeadings[Number(menuIndex)])
+        this.scrollTo(heading)
       } else {
         this.scrollTo(this.trail[Number(trailIndex)])
       }
@@ -92,8 +94,12 @@ module.exports = class HeadingBar {
 
   attach() {
     // Spread to the container's edges, over the padding its own sides restore.
+    // Pulled up over the container's top padding, at its own (smaller) height:
+    // the content comes up under it rather than below a padding-tall band.
     const style = getComputedStyle(this.scroller)
-    this.paddingTop = style.paddingTop
+    // Important: GitHub style zeroes the first child's top margin with
+    // `!important`, which only an inline `!important` beats.
+    this.element.style.setProperty('margin-top', `-${style.paddingTop}`, 'important')
     Object.assign(this.element.style, {
       top: `-${style.paddingTop}`,
       marginLeft: `-${style.paddingLeft}`,
@@ -101,7 +107,6 @@ module.exports = class HeadingBar {
       paddingLeft: style.paddingLeft,
       paddingRight: style.paddingRight
     })
-    this.applyGeometry()
     if (this.scroller.firstChild !== this.element) {
       this.scroller.prepend(this.element)
     }
@@ -115,7 +120,7 @@ module.exports = class HeadingBar {
     this.update()
   }
 
-  // Current heading = the last whose top has crossed the bar's bottom; its
+  // Current heading = the last whose top has reached the bar's bottom; its
   // trail = it, then each nearest preceding heading of a higher rank.
   update() {
     // No box to measure against: keep what we have rather than settle on the
@@ -129,7 +134,9 @@ module.exports = class HeadingBar {
     let hi = this.headings.length
     while (lo < hi) {
       const mid = (lo + hi) >> 1
-      if (this.headings[mid].getBoundingClientRect().top < barBottom) lo = mid + 1
+      // A pixel of slack: a heading parked right under the bar by `scrollTo`
+      // is the one jumped to, so it's current.
+      if (this.headings[mid].getBoundingClientRect().top < barBottom + 1) lo = mid + 1
       else hi = mid
     }
 
@@ -142,8 +149,11 @@ module.exports = class HeadingBar {
         rank = level
       }
     }
-    // Under the h1 alone, the bar would only repeat the title: stay empty.
-    if (!trail.some(el => levelOf(el) > 1)) trail = []
+    // Above every heading (top of the document): the title mark, still a
+    // way back up and never an empty bar.
+    if (trail.length === 0 && this.headings.length > 0) {
+      trail = [this.headings.find(el => levelOf(el) === 1) || this.headings[0]]
+    }
 
     if (
       this.trail &&
@@ -156,20 +166,9 @@ module.exports = class HeadingBar {
     this.render()
   }
 
-  // Shown, the bar takes the place of the container's top padding: pulled up
-  // over it and at least as tall, so content neither moves nor shows through.
-  // Empty, it takes no room at all — no invisible band swallowing the text
-  // that scrolls past the top.
-  applyGeometry() {
-    const empty = !this.trail || this.trail.length === 0
-    this.element.style.marginTop = empty ? '0px' : `-${this.paddingTop}`
-    this.element.style.minHeight = empty ? '0px' : this.paddingTop
-  }
-
   render() {
     this.trailElement.textContent = ''
     this.element.classList.toggle('is-empty', this.trail.length === 0)
-    this.applyGeometry()
     if (this.trail.length === 0) this.closeMenu()
     this.trail.forEach((heading, i) => {
       if (i > 0) {
@@ -206,17 +205,24 @@ module.exports = class HeadingBar {
   openMenu(item) {
     this.keepMenu()
     const heading = this.trail[Number(item.dataset.trailIndex)]
-    if (!heading || levelOf(heading) === 1) return this.closeMenu()
+    if (!heading) return this.closeMenu()
     if (!this.menu.hidden && this.menuFor === heading) return
 
+    // `#`: every heading, indented by level, the reader's own marked.
+    const outline = levelOf(heading) === 1
+    const headings = outline ? this.headings : this.siblingsOf(heading)
+    const current = outline ? this.trail[this.trail.length - 1] : heading
+    const top = Math.min(...headings.map(levelOf))
+
     this.menuFor = heading
-    this.menuHeadings = this.siblingsOf(heading)
+    this.menuHeadings = headings
     this.menu.textContent = ''
     this.menuHeadings.forEach((sibling, i) => {
       const entry = document.createElement('a')
       entry.className = 'menu-item'
-      entry.classList.toggle('is-current', sibling === heading)
+      entry.classList.toggle('is-current', sibling === current)
       entry.dataset.menuIndex = i
+      if (outline) entry.style.setProperty('--depth', levelOf(sibling) - top)
       entry.textContent = headingText(sibling)
       this.menu.appendChild(entry)
     })
@@ -225,8 +231,8 @@ module.exports = class HeadingBar {
     this.menu.hidden = false
     // A long list opens on the current entry (by hand: `scrollIntoView` would
     // scroll the preview too).
-    const current = this.menu.querySelector('.is-current')
-    this.menu.scrollTop = current.offsetTop - this.menu.clientHeight / 2
+    const entry = this.menu.querySelector('.is-current')
+    this.menu.scrollTop = entry.offsetTop - this.menu.clientHeight / 2
   }
 
   keepMenu() {
@@ -246,12 +252,12 @@ module.exports = class HeadingBar {
     this.menuHeadings = []
   }
 
-  // Bring `heading` right below the bar — shown, not yet current.
+  // Bring `heading` right below the bar — which makes it current.
   scrollTo(heading) {
     if (!heading || !heading.isConnected) return
     const barBottom = this.element.getBoundingClientRect().bottom
     const delta = heading.getBoundingClientRect().top - barBottom
-    this.scroller.scrollTop = Math.floor(this.scroller.scrollTop + delta)
+    this.scroller.scrollTop = Math.ceil(this.scroller.scrollTop + delta)
   }
 }
 

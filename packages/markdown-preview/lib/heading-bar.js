@@ -49,7 +49,12 @@ module.exports = class HeadingBar {
     // preview is on a background tab (or not laid out yet, right after it
     // opens). Coming back fires no scroll event — but the box goes from
     // nothing to something, which this catches.
-    this.resizeObserver = new ResizeObserver(this.onScroll)
+    // Same for the bar's geometry: there is no computed padding to read while
+    // the preview is out of the document, as it is for its first render.
+    this.resizeObserver = new ResizeObserver(() => {
+      this.layout()
+      this.onScroll()
+    })
     this.resizeObserver.observe(scroller)
     this.onClick = event => {
       const item = event.target.closest('[data-trail-index], [data-menu-index]')
@@ -92,11 +97,15 @@ module.exports = class HeadingBar {
     this.element.remove()
   }
 
-  attach() {
-    // Spread to the container's edges, over the padding its own sides restore.
-    // Pulled up over the container's top padding, at its own (smaller) height:
-    // the content comes up under it rather than below a padding-tall band.
+  // Spread to the container's edges, over the padding its own sides restore.
+  // Pulled up over the container's top padding, at its own (smaller) height:
+  // the content comes up under it rather than below a padding-tall band.
+  layout() {
     const style = getComputedStyle(this.scroller)
+    // Detached: every computed value is empty, and `-` alone would be dropped
+    // as invalid, leaving a bar that doesn't stick. The resize observer calls
+    // back once the preview is in the document.
+    if (!style.paddingTop) return
     // Important: GitHub style zeroes the first child's top margin with
     // `!important`, which only an inline `!important` beats.
     this.element.style.setProperty('margin-top', `-${style.paddingTop}`, 'important')
@@ -107,6 +116,10 @@ module.exports = class HeadingBar {
       paddingLeft: style.paddingLeft,
       paddingRight: style.paddingRight
     })
+  }
+
+  attach() {
+    this.layout()
     if (this.scroller.firstChild !== this.element) {
       this.scroller.prepend(this.element)
     }

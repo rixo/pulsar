@@ -181,10 +181,18 @@ function renderHTMLString(text) {
 
       return `<li ${listAttributes}>${text}</li>\n`
     }
+    // Same output as marked's deprecated `headerIds` option, which warns on
+    // every parse when left on: in-page `#anchor` links need the ids.
+    renderer.heading = function (text, level, raw, slugger) {
+      return `<h${level} id="${slugger.slug(raw)}">${text}</h${level}>\n`
+    }
   }
 
   marked.setOptions({
     breaks: atom.config.get('markdown-preview.breakOnSingleNewline'),
+    // Both deprecated and on by default, warning on every parse.
+    headerIds: false,
+    mangle: false,
     renderer
   })
 
